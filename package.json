@@ -54,7 +54,8 @@
       {
         "provider": "github",
         "owner": "Furiade54",
-        "repo": "ToolsMSSQL"
+        "repo": "ToolsMSSQL",
+        "releaseType": "release"
       }
     ],
     "win": {
