@@ -4,6 +4,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minimize: () => ipcRenderer.send('window:minimize'),
   maximizeToggle: () => ipcRenderer.send('window:maximize-toggle'),
   close: () => ipcRenderer.send('window:close'),
+  auth: {
+    register: (payload?: { username?: string; password?: string }) =>
+      ipcRenderer.invoke('auth:register', payload),
+    login: (payload?: { username?: string; password?: string }) =>
+      ipcRenderer.invoke('auth:login', payload),
+  },
   autoUpdate: {
     checkForUpdates: () => ipcRenderer.invoke('autoUpdate:check'),
     quitAndInstall: (options?: { isSilent?: boolean; isForceRunAfter?: boolean }) =>

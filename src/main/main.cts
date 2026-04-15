@@ -1,13 +1,43 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import log from 'electron-log'
+import crypto from 'node:crypto'
 import path from 'node:path'
+import Database from 'better-sqlite3'
 
 let mainWindow: BrowserWindow | null = null
 let autoUpdateInitialized = false
+let db: Database.Database | null = null
 
 function getWindowFromEvent(event: Electron.IpcMainEvent) {
   return BrowserWindow.fromWebContents(event.sender)
+}
+
+function ensureDb() {
+  if (db) return db
+
+  const dbPath = path.join(app.getPath('userData'), 'toolsmssql.db')
+  const database = new Database(dbPath)
+
+  database.pragma('journal_mode = WAL')
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      password_salt TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `)
+
+  db = database
+  return database
+}
+
+function hashPassword(password: string, saltHex: string) {
+  const salt = Buffer.from(saltHex, 'hex')
+  const derivedKey = crypto.scryptSync(password, salt, 64)
+  return derivedKey.toString('hex')
 }
 
 function createMainWindow() {
@@ -65,6 +95,88 @@ function initAutoUpdater() {
   )
 }
 
+ipcMain.handle(
+  'auth:register',
+  async (
+    _event,
+    payload?: { username?: string; password?: string },
+  ): Promise<
+    | { ok: true; user: { id: number; username: string } }
+    | { ok: false; error: string }
+  > => {
+    try {
+      const username = String(payload?.username ?? '').trim()
+      const password = String(payload?.password ?? '')
+
+      if (username.length < 3) return { ok: false, error: 'username-too-short' }
+      if (password.length < 6) return { ok: false, error: 'password-too-short' }
+
+      const database = ensureDb()
+      const saltHex = crypto.randomBytes(16).toString('hex')
+      const passwordHash = hashPassword(password, saltHex)
+      const createdAt = new Date().toISOString()
+
+      const stmt = database.prepare(
+        'INSERT INTO users (username, password_salt, password_hash, created_at) VALUES (?, ?, ?, ?)',
+      )
+      const info = stmt.run(username, saltHex, passwordHash, createdAt)
+
+      return {
+        ok: true,
+        user: { id: Number(info.lastInsertRowid), username },
+      }
+    } catch (e) {
+      const msg = String((e as Error)?.message ?? e)
+      if (msg.includes('UNIQUE') || msg.includes('unique')) {
+        return { ok: false, error: 'username-exists' }
+      }
+      return { ok: false, error: 'register-failed' }
+    }
+  },
+)
+
+ipcMain.handle(
+  'auth:login',
+  async (
+    _event,
+    payload?: { username?: string; password?: string },
+  ): Promise<
+    | { ok: true; user: { id: number; username: string } }
+    | { ok: false; error: string }
+  > => {
+    try {
+      const username = String(payload?.username ?? '').trim()
+      const password = String(payload?.password ?? '')
+
+      if (!username || !password) return { ok: false, error: 'invalid-input' }
+
+      const database = ensureDb()
+      const row = database
+        .prepare(
+          'SELECT id, username, password_salt as passwordSalt, password_hash as passwordHash FROM users WHERE username = ?',
+        )
+        .get(username) as
+        | {
+            id: number
+            username: string
+            passwordSalt: string
+            passwordHash: string
+          }
+        | undefined
+
+      if (!row) return { ok: false, error: 'invalid-credentials' }
+
+      const computed = hashPassword(password, row.passwordSalt)
+      if (computed !== row.passwordHash)
+        return { ok: false, error: 'invalid-credentials' }
+
+      return { ok: true, user: { id: row.id, username: row.username } }
+    } catch (e) {
+      return { ok: false, error: 'login-failed' }
+    }
+  },
+)
+
 ipcMain.on('window:minimize', (event) => getWindowFromEvent(event)?.minimize())
 
 ipcMain.on('window:maximize-toggle', (event) => {
@@ -102,6 +214,7 @@ ipcMain.handle(
 )
 
 app.whenReady().then(() => {
+  ensureDb()
   initAutoUpdater()
   createMainWindow()
 })
