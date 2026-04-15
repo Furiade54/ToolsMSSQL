@@ -8,6 +8,10 @@ import Database from 'better-sqlite3'
 let mainWindow: BrowserWindow | null = null
 let autoUpdateInitialized = false
 let db: Database.Database | null = null
+const loginAttempts = new Map<
+  string,
+  { firstAttemptMs: number; failures: number; blockedUntilMs: number }
+>()
 
 function getWindowFromEvent(event: Electron.IpcMainEvent) {
   return BrowserWindow.fromWebContents(event.sender)
@@ -38,6 +42,47 @@ function hashPassword(password: string, saltHex: string) {
   const salt = Buffer.from(saltHex, 'hex')
   const derivedKey = crypto.scryptSync(password, salt, 64)
   return derivedKey.toString('hex')
+}
+
+function verifyPassword(password: string, saltHex: string, expectedHashHex: string) {
+  const computedHex = hashPassword(password, saltHex)
+  const computed = Buffer.from(computedHex, 'hex')
+  const expected = Buffer.from(expectedHashHex, 'hex')
+  if (computed.length !== expected.length) return false
+  return crypto.timingSafeEqual(computed, expected)
+}
+
+function getLoginKey(event: Electron.IpcMainInvokeEvent, username: string) {
+  return `${event.sender.id}:${username}`
+}
+
+function isRateLimited(key: string) {
+  const now = Date.now()
+  const entry = loginAttempts.get(key)
+  if (!entry) return false
+  if (entry.blockedUntilMs > now) return true
+  if (now - entry.firstAttemptMs > 60_000) {
+    loginAttempts.delete(key)
+    return false
+  }
+  return false
+}
+
+function recordLoginFailure(key: string) {
+  const now = Date.now()
+  const entry = loginAttempts.get(key)
+  if (!entry || now - entry.firstAttemptMs > 60_000) {
+    loginAttempts.set(key, { firstAttemptMs: now, failures: 1, blockedUntilMs: 0 })
+    return
+  }
+  entry.failures += 1
+  if (entry.failures >= 5) {
+    entry.blockedUntilMs = now + 30_000
+  }
+}
+
+function clearLoginAttempts(key: string) {
+  loginAttempts.delete(key)
 }
 
 function createMainWindow() {
@@ -138,7 +183,7 @@ ipcMain.handle(
 ipcMain.handle(
   'auth:login',
   async (
-    _event,
+    event,
     payload?: { username?: string; password?: string },
   ): Promise<
     | { ok: true; user: { id: number; username: string } }
@@ -149,6 +194,9 @@ ipcMain.handle(
       const password = String(payload?.password ?? '')
 
       if (!username || !password) return { ok: false, error: 'invalid-input' }
+
+      const rateKey = getLoginKey(event, username)
+      if (isRateLimited(rateKey)) return { ok: false, error: 'rate-limited' }
 
       const database = ensureDb()
       const row = database
@@ -166,10 +214,13 @@ ipcMain.handle(
 
       if (!row) return { ok: false, error: 'invalid-credentials' }
 
-      const computed = hashPassword(password, row.passwordSalt)
-      if (computed !== row.passwordHash)
+      const ok = verifyPassword(password, row.passwordSalt, row.passwordHash)
+      if (!ok) {
+        recordLoginFailure(rateKey)
         return { ok: false, error: 'invalid-credentials' }
+      }
 
+      clearLoginAttempts(rateKey)
       return { ok: true, user: { id: row.id, username: row.username } }
     } catch (e) {
       return { ok: false, error: 'login-failed' }

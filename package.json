@@ -1,11 +1,13 @@
 {
   "name": "toolsmssql",
   "private": true,
-  "version": "0.0.2",
+  "version": "0.0.3",
   "type": "module",
   "main": "dist/main/main.cjs",
   "scripts": {
-    "dev": "concurrently -k \"vite\" \"tsc -p tsconfig.main.json -w\" \"tsc -p tsconfig.preload.json -w\" \"wait-on http://127.0.0.1:5173 dist/main/main.cjs dist/preload/preload.cjs && cross-env NODE_ENV=development electron .\"",
+    "kill:5173": "powershell.exe -NoProfile -Command \"$p=(Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique); if($null -ne $p -and $p.Count -gt 0){Stop-Process -Id $p -Force}\"",
+    "rebuild:native": "electron-rebuild -f -w better-sqlite3",
+    "dev": "npm run kill:5173 && concurrently -k \"vite --host 127.0.0.1 --port 5173 --strictPort\" \"tsc -p tsconfig.main.json -w\" \"tsc -p tsconfig.preload.json -w\" \"npm run rebuild:native && wait-on http://127.0.0.1:5173 dist/main/main.cjs dist/preload/preload.cjs && cross-env NODE_ENV=development electron .\"",
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.main.json && tsc -p tsconfig.preload.json",
     "build": "npm run build:renderer && npm run build:electron",
@@ -22,6 +24,7 @@
     "react-dom": "^19.2.4"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.3",
     "@eslint/js": "^9.39.4",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.12.2",
