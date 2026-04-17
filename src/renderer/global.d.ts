@@ -22,6 +22,42 @@ declare global {
           | { ok: false; error: string }
         >
       }
+      scripts?: {
+        create?: (payload?: {
+          name?: string
+          code?: string
+          description?: string
+        }) => Promise<
+          | {
+              ok: true
+              script: {
+                id: number
+                name: string
+                code: string
+                description: string | null
+                createdAt: string
+              }
+            }
+          | { ok: false; error: string }
+        >
+        list?: () => Promise<
+          | {
+              ok: true
+              scripts: Array<{
+                id: number
+                name: string
+                code: string
+                description: string | null
+                createdAt: string
+              }>
+            }
+          | { ok: false; error: string }
+        >
+        execute?: (payload?: { id?: number }) => Promise<
+          | { ok: true; message: string }
+          | { ok: false; error: string; message?: string }
+        >
+      }
       autoUpdate?: {
         checkForUpdates?: () => Promise<{ ok: boolean; error?: string }>
         quitAndInstall?: (options?: {

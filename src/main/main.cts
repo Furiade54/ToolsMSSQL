@@ -4,6 +4,7 @@ import log from 'electron-log'
 import crypto from 'node:crypto'
 import path from 'node:path'
 import Database from 'better-sqlite3'
+import sql from 'mssql'
 
 let mainWindow: BrowserWindow | null = null
 let autoUpdateInitialized = false
@@ -30,6 +31,13 @@ function ensureDb() {
       username TEXT NOT NULL UNIQUE,
       password_salt TEXT NOT NULL,
       password_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS scripts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      code TEXT NOT NULL,
+      description TEXT,
       created_at TEXT NOT NULL
     );
   `)
@@ -83,6 +91,37 @@ function recordLoginFailure(key: string) {
 
 function clearLoginAttempts(key: string) {
   loginAttempts.delete(key)
+}
+
+function getMssqlConfig():
+  | { ok: true; config: sql.config }
+  | { ok: false; error: 'missing-server' | 'missing-database' | 'missing-credentials' } {
+  const server = String(process.env.MSSQL_SERVER ?? '').trim()
+  const database = String(process.env.MSSQL_DATABASE ?? '').trim()
+  const user = String(process.env.MSSQL_USER ?? '').trim()
+  const password = String(process.env.MSSQL_PASSWORD ?? '')
+  const portRaw = String(process.env.MSSQL_PORT ?? '').trim()
+  const port = portRaw ? Number(portRaw) : undefined
+
+  if (!server) return { ok: false, error: 'missing-server' }
+  if (!database) return { ok: false, error: 'missing-database' }
+  if (!user || !password) return { ok: false, error: 'missing-credentials' }
+
+  const trustRaw = String(process.env.MSSQL_TRUST_SERVER_CERT ?? 'true').trim()
+  const trustServerCertificate = trustRaw.toLowerCase() !== 'false'
+
+  const config: sql.config = {
+    server,
+    database,
+    user,
+    password,
+    ...(Number.isFinite(port) ? { port } : {}),
+    options: {
+      trustServerCertificate,
+    },
+  }
+
+  return { ok: true, config }
 }
 
 function createMainWindow() {
@@ -224,6 +263,129 @@ ipcMain.handle(
       return { ok: true, user: { id: row.id, username: row.username } }
     } catch (e) {
       return { ok: false, error: 'login-failed' }
+    }
+  },
+)
+
+ipcMain.handle(
+  'scripts:create',
+  async (
+    _event,
+    payload?: { name?: string; code?: string; description?: string },
+  ): Promise<
+    | {
+        ok: true
+        script: {
+          id: number
+          name: string
+          code: string
+          description: string | null
+          createdAt: string
+        }
+      }
+    | { ok: false; error: string }
+  > => {
+    try {
+      const name = String(payload?.name ?? '').trim()
+      const code = String(payload?.code ?? '')
+      const descriptionRaw = payload?.description
+      const description =
+        typeof descriptionRaw === 'string' && descriptionRaw.trim().length > 0
+          ? descriptionRaw.trim()
+          : null
+
+      if (!name) return { ok: false, error: 'name-required' }
+      if (!code.trim()) return { ok: false, error: 'code-required' }
+
+      const database = ensureDb()
+      const createdAt = new Date().toISOString()
+      const stmt = database.prepare(
+        'INSERT INTO scripts (name, code, description, created_at) VALUES (?, ?, ?, ?)',
+      )
+      const info = stmt.run(name, code, description, createdAt)
+
+      return {
+        ok: true,
+        script: {
+          id: Number(info.lastInsertRowid),
+          name,
+          code,
+          description,
+          createdAt,
+        },
+      }
+    } catch (e) {
+      return { ok: false, error: 'create-failed' }
+    }
+  },
+)
+
+ipcMain.handle(
+  'scripts:list',
+  async (): Promise<
+    | {
+        ok: true
+        scripts: Array<{
+          id: number
+          name: string
+          code: string
+          description: string | null
+          createdAt: string
+        }>
+      }
+    | { ok: false; error: string }
+  > => {
+    try {
+      const database = ensureDb()
+      const rows = database
+        .prepare(
+          'SELECT id, name, code, description, created_at as createdAt FROM scripts ORDER BY id DESC',
+        )
+        .all() as Array<{
+        id: number
+        name: string
+        code: string
+        description: string | null
+        createdAt: string
+      }>
+      return { ok: true, scripts: rows }
+    } catch (e) {
+      return { ok: false, error: 'list-failed' }
+    }
+  },
+)
+
+ipcMain.handle(
+  'scripts:execute',
+  async (
+    _event,
+    payload?: { id?: number },
+  ): Promise<
+    | { ok: true; message: string }
+    | { ok: false; error: string; message?: string }
+  > => {
+    try {
+      const id = Number(payload?.id)
+      if (!Number.isFinite(id)) return { ok: false, error: 'invalid-id' }
+
+      const database = ensureDb()
+      const row = database
+        .prepare('SELECT id, name, code FROM scripts WHERE id = ?')
+        .get(id) as { id: number; name: string; code: string } | undefined
+
+      if (!row) return { ok: false, error: 'not-found' }
+
+      const cfg = getMssqlConfig()
+      if (!cfg.ok) return { ok: false, error: cfg.error }
+
+      const pool = await sql.connect(cfg.config)
+      await pool.request().batch(row.code)
+      await pool.close()
+
+      return { ok: true, message: `Ejecutado: ${row.name}` }
+    } catch (e) {
+      const msg = String((e as Error)?.message ?? e)
+      return { ok: false, error: 'execute-failed', message: msg }
     }
   },
 )

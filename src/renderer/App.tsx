@@ -9,6 +9,273 @@ type AuthedUser = { id: number; username: string }
 
 const AUTH_STORAGE_KEY = 'toolsmssql.auth.user'
 
+function ScriptFormModal({
+  open,
+  onClose,
+  onSave,
+}: {
+  open: boolean
+  onClose: () => void
+  onSave: (payload: { name: string; code: string; description: string }) => Promise<
+    | { ok: true; script: { id: number; name: string } }
+    | { ok: false; error: string }
+  >
+}) {
+  const [name, setName] = React.useState('')
+  const [code, setCode] = React.useState('')
+  const [description, setDescription] = React.useState('')
+  const [didSubmit, setDidSubmit] = React.useState(false)
+  const [busy, setBusy] = React.useState(false)
+  const [submitError, setSubmitError] = React.useState<string | null>(null)
+
+  const nameRef = React.useRef<HTMLInputElement | null>(null)
+
+  React.useEffect(() => {
+    if (!open) return
+    setDidSubmit(false)
+    setSubmitError(null)
+    setName('')
+    setCode('')
+    setDescription('')
+    requestAnimationFrame(() => nameRef.current?.focus())
+  }, [open])
+
+  React.useEffect(() => {
+    if (!open) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, onClose])
+
+  if (!open) return null
+
+  const nameTrimmed = name.trim()
+  const nameError =
+    (didSubmit || name.length > 0) && nameTrimmed.length === 0
+      ? 'Ingresa un nombre'
+      : null
+  const codeError =
+    (didSubmit || code.length > 0) && code.trim().length === 0
+      ? 'Ingresa el código del script'
+      : null
+
+  const canSave = nameTrimmed.length > 0 && code.trim().length > 0
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      style={
+        {
+          WebkitAppRegion: 'no-drag',
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(15, 23, 42, 0.45)',
+          display: 'grid',
+          placeItems: 'center',
+          padding: 18,
+          zIndex: 50,
+        } as DraggableStyle
+      }
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div
+        style={{
+          width: 'min(820px, 100%)',
+          borderRadius: 16,
+          border: '1px solid rgba(15, 23, 42, 0.12)',
+          background: 'white',
+          boxShadow: '0 24px 70px rgba(15, 23, 42, 0.25)',
+          padding: 18,
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 650, color: '#0f172a' }}>
+              Nuevo script MSSQL
+            </div>
+            <div style={{ fontSize: 13, marginTop: 6, color: 'rgba(15, 23, 42, 0.68)' }}>
+              Completa los campos para agregar un nuevo script
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              height: 34,
+              width: 34,
+              borderRadius: 10,
+              border: '1px solid rgba(15, 23, 42, 0.12)',
+              background: 'white',
+              cursor: 'pointer',
+              display: 'grid',
+              placeItems: 'center',
+              color: 'rgba(15, 23, 42, 0.7)',
+            }}
+            aria-label="Cerrar"
+            title="Cerrar"
+          >
+            ×
+          </button>
+        </div>
+
+        <div style={{ height: 16 }} />
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 12, color: 'rgba(15, 23, 42, 0.68)', marginBottom: 6 }}>
+              Nombre Scrip
+            </div>
+            <input
+              ref={nameRef}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              aria-invalid={nameError ? true : undefined}
+              disabled={busy}
+              style={{
+                height: 44,
+                borderRadius: 12,
+                border: `1px solid ${nameError ? '#b91c1c' : 'rgba(15, 23, 42, 0.18)'}`,
+                padding: '0 12px',
+                outline: 'none',
+                width: '100%',
+                fontSize: 14,
+                boxSizing: 'border-box',
+              }}
+            />
+            {nameError ? (
+              <div style={{ fontSize: 12, color: '#b91c1c', marginTop: 6 }}>{nameError}</div>
+            ) : null}
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, color: 'rgba(15, 23, 42, 0.68)', marginBottom: 6 }}>
+              Codigo del Script
+            </div>
+            <textarea
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              aria-invalid={codeError ? true : undefined}
+              disabled={busy}
+              style={{
+                minHeight: 220,
+                resize: 'vertical',
+                borderRadius: 12,
+                border: `1px solid ${codeError ? '#b91c1c' : 'rgba(15, 23, 42, 0.18)'}`,
+                padding: 12,
+                outline: 'none',
+                width: '100%',
+                fontSize: 13,
+                lineHeight: 1.45,
+                boxSizing: 'border-box',
+                fontFamily:
+                  'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+              }}
+              placeholder="SELECT 1;"
+            />
+            {codeError ? (
+              <div style={{ fontSize: 12, color: '#b91c1c', marginTop: 6 }}>{codeError}</div>
+            ) : null}
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, color: 'rgba(15, 23, 42, 0.68)', marginBottom: 6 }}>
+              Descripción
+            </div>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              disabled={busy}
+              style={{
+                minHeight: 90,
+                resize: 'vertical',
+                borderRadius: 12,
+                border: '1px solid rgba(15, 23, 42, 0.18)',
+                padding: 12,
+                outline: 'none',
+                width: '100%',
+                fontSize: 13,
+                lineHeight: 1.45,
+                boxSizing: 'border-box',
+              }}
+              placeholder="Describe qué hace el script…"
+            />
+          </div>
+        </div>
+
+        <div style={{ height: 16 }} />
+
+        {submitError ? (
+          <div role="alert" style={{ fontSize: 12, color: '#b91c1c' }}>
+            {submitError}
+          </div>
+        ) : null}
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            style={{
+              height: 40,
+              borderRadius: 12,
+              border: '1px solid rgba(15, 23, 42, 0.12)',
+              background: 'white',
+              padding: '0 12px',
+              fontSize: 13,
+              cursor: 'pointer',
+            }}
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            disabled={!canSave || busy}
+            onClick={async () => {
+              setDidSubmit(true)
+              setSubmitError(null)
+              if (!canSave) return
+
+              setBusy(true)
+              try {
+                const result = await onSave({
+                  name: nameTrimmed,
+                  code,
+                  description: description.trim(),
+                })
+                if (!result.ok) {
+                  setSubmitError('No se pudo guardar el script')
+                  return
+                }
+                onClose()
+              } finally {
+                setBusy(false)
+              }
+            }}
+            style={{
+              height: 40,
+              borderRadius: 12,
+              border: '1px solid rgba(15, 23, 42, 1)',
+              background: !canSave || busy ? 'rgba(15, 23, 42, 0.25)' : '#0f172a',
+              color: 'white',
+              padding: '0 14px',
+              fontSize: 13,
+              fontWeight: 650,
+              cursor: !canSave || busy ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {busy ? 'Guardando...' : 'Guardar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function WindowControls() {
   return (
     <div style={{ WebkitAppRegion: 'no-drag' } as DraggableStyle}>
@@ -571,6 +838,17 @@ function UpdateButton() {
 
 export default function App() {
   const [user, setUser] = React.useState<AuthedUser | null>(null)
+  const [isScriptFormOpen, setIsScriptFormOpen] = React.useState(false)
+  const [scripts, setScripts] = React.useState<
+    Array<{
+      id: number
+      name: string
+      code: string
+      description: string | null
+      createdAt: string
+    }>
+  >([])
+  const [runMessage, setRunMessage] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     try {
@@ -584,6 +862,17 @@ export default function App() {
       // ignore
     }
   }, [])
+
+  React.useEffect(() => {
+    if (!user) return
+    const api = window.electronAPI?.scripts
+    if (!api?.list) return
+
+    ;(async () => {
+      const result = await api.list?.()
+      if (result?.ok) setScripts(result.scripts)
+    })()
+  }, [user])
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -655,7 +944,146 @@ export default function App() {
         }}
       >
         {user ? (
-          <h1 style={{ margin: 0, fontSize: 42 }}>hola mundo</h1>
+          <div
+            style={{
+              width: '100%',
+              maxWidth: 980,
+              padding: '26px 38px',
+              justifySelf: 'stretch',
+              alignSelf: 'stretch',
+            }}
+          >
+            <ScriptFormModal
+              open={isScriptFormOpen}
+              onClose={() => setIsScriptFormOpen(false)}
+              onSave={async (payload) => {
+                const api = window.electronAPI?.scripts
+                if (!api?.create) return { ok: false, error: 'no-api' }
+                const res = await api.create(payload)
+                if (res.ok) {
+                  setScripts((prev) => [res.script, ...prev])
+                  return { ok: true, script: { id: res.script.id, name: res.script.name } }
+                }
+                return { ok: false, error: res.error }
+              }}
+            />
+            <div
+              style={{
+                fontSize: 16,
+                color: 'rgba(15, 23, 42, 0.65)',
+                marginTop: 12,
+                marginLeft: 14,
+              }}
+            >
+              Anadir Scripts MSSQL (Haga clic en el boton + se abrirá un formulario para agregar un nuevo script )
+            </div>
+
+            {runMessage ? (
+              <div
+                role="status"
+                style={{
+                  marginTop: 10,
+                  marginLeft: 14,
+                  fontSize: 12,
+                  color: 'rgba(15, 23, 42, 0.7)',
+                }}
+              >
+                {runMessage}
+              </div>
+            ) : null}
+
+            <button
+              type="button"
+              aria-label="Añadir script"
+              title="Añadir script"
+              style={
+                {
+                  WebkitAppRegion: 'no-drag',
+                  position: 'fixed',
+                  right: 28,
+                  bottom: 28,
+                  height: 64,
+                  width: 64,
+                  borderRadius: 999,
+                  border: '1px solid rgba(15, 23, 42, 0.14)',
+                  background: '#0f172a',
+                  cursor: 'pointer',
+                  display: 'grid',
+                  placeItems: 'center',
+                  boxShadow:
+                    '0 12px 24px rgba(15, 23, 42, 0.24), 0 0 0 6px rgba(15, 23, 42, 0.08)',
+                  zIndex: 20,
+                } as DraggableStyle
+              }
+              onClick={() => setIsScriptFormOpen(true)}
+            >
+              <svg
+                width="28"
+                height="28"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path
+                  d="M12 5v14M5 12h14"
+                  stroke="rgba(255,255,255,0.92)"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+
+            {scripts.length > 0 ? (
+              <div style={{ marginTop: 26, marginLeft: 44 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 10,
+                    alignItems: 'flex-start',
+                  }}
+                >
+                  {scripts.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      style={{
+                        height: 40,
+                        borderRadius: 12,
+                        border: '1px solid rgba(15, 23, 42, 0.18)',
+                        background: 'white',
+                        padding: '0 14px',
+                        fontSize: 13,
+                        cursor: 'pointer',
+                      }}
+                      title={s.description ?? s.name}
+                      onClick={async () => {
+                        const api = window.electronAPI?.scripts
+                        if (!api?.execute) {
+                          setRunMessage('No se pudo ejecutar: API no disponible')
+                          return
+                        }
+                        const result = await api.execute({ id: s.id })
+                        if (result.ok) {
+                          setRunMessage(result.message)
+                          return
+                        }
+                        const map: Record<string, string> = {
+                          'missing-server': 'Configura MSSQL_SERVER',
+                          'missing-database': 'Configura MSSQL_DATABASE',
+                          'missing-credentials': 'Configura MSSQL_USER y MSSQL_PASSWORD',
+                          'execute-failed': 'Error ejecutando el script',
+                        }
+                        setRunMessage(map[result.error] ?? result.message ?? 'No se pudo ejecutar')
+                      }}
+                    >
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
         ) : (
           <AuthCard onAuthenticated={(u) => setUser(u)} />
         )}
