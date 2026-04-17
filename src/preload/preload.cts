@@ -10,6 +10,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     login: (payload?: { username?: string; password?: string }) =>
       ipcRenderer.invoke('auth:login', payload),
   },
+  scripts: {
+    create: (payload?: { name?: string; code?: string; description?: string }) =>
+      ipcRenderer.invoke('scripts:create', payload),
+    list: () => ipcRenderer.invoke('scripts:list'),
+    execute: (payload?: { id?: number }) => ipcRenderer.invoke('scripts:execute', payload),
+  },
   autoUpdate: {
     checkForUpdates: () => ipcRenderer.invoke('autoUpdate:check'),
     quitAndInstall: (options?: { isSilent?: boolean; isForceRunAfter?: boolean }) =>
